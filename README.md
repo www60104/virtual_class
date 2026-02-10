@@ -20,8 +20,9 @@
 ### 技術棧
 
 - **後端**: FastAPI + PostgreSQL
+- **前端**: Next.js + React
 - **即時通訊**: LiveKit (WebRTC)
-- **語音處理**: OpenAI Whisper (STT) + Azure Edge TTS
+- **語音處理**: OpenAI Realtime API (Speech-to-Speech)
 - **AI 協調**: LangGraph
 - **LLM**: OpenAI GPT-4
 
@@ -32,17 +33,21 @@ virtual_class/
 ├── main.py                      # FastAPI 應用入口
 ├── models.py                    # SQLAlchemy 資料模型
 ├── database.py                  # 資料庫配置
-├── .env.example                 # 環境變數範本
 ├── requirements.txt             # Python 依賴
+├── .env                         # 環境變數（需自行設定）
+├── usage_guide_cn.md            # 中文使用手冊
 │
 ├── api/                         # API 層
-│   ├── auth.py                  # 認證端點
-│   ├── session.py               # Session 管理
+│   ├── session.py               # Session 管理（無需登入）
 │   ├── report.py                # 報告匯出
 │   └── livekit_token.py         # LiveKit Token 生成
 │
+├── services/                    # 服務層
+│   ├── db_manager.py            # 資料庫 CRUD 操作封裝
+│   └── gcc_module.py            # GCC 上下文管理與事件記錄
+│
 ├── core/                        # 核心模組
-│   ├── auth_module.py           # JWT + LiveKit 認證
+│   ├── auth_module.py           # LiveKit Token 認證
 │   ├── session_manager.py       # Session 狀態管理
 │   └── langgraph_coordinator.py # LangGraph 協調器
 │
@@ -52,8 +57,13 @@ virtual_class/
 │   ├── expert_agent.py          # 專家評估 Agent
 │   └── voice_pipeline.py        # 🔥 雙路徑語音 Pipeline
 │
-└── utils/                       # 工具層
-    └── logger.py                # 對話記錄器
+├── utils/                       # 工具層
+│   └── logger.py                # 對話記錄器
+│
+└── web_client/                  # 前端 (Next.js)
+    ├── app/                     # Next.js App Router
+    ├── components/              # React 元件
+    └── public/                  # 靜態資源
 ```
 
 ## 🚀 快速開始
@@ -61,84 +71,72 @@ virtual_class/
 ### 1. 環境準備
 
 ```powershell
-# 創建虛擬環境
-python -m venv venv
-venv\Scripts\activate
+# 建立虛擬環境
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
 
-# 安裝依賴
+# 安裝 Python 依賴
 pip install -r requirements.txt
+
+# 安裝前端依賴
+cd web_client
+npm install
+cd ..
 ```
 
 ### 2. 配置環境變數
 
-```powershell
-# 複製環境變數範本
-copy .env.example .env
+在專案根目錄建立 `.env` 檔案，填入以下資訊：
 
-# 編輯 .env 填入你的 API Keys
-# - DATABASE_URL
-# - OPENAI_API_KEY
-# - LIVEKIT_API_KEY
-# - LIVEKIT_API_SECRET
-# - JWT_SECRET_KEY
+```ini
+# LiveKit Cloud Configuration
+LIVEKIT_URL=wss://your-project.livekit.cloud
+LIVEKIT_API_KEY=APIqwerty12345
+LIVEKIT_API_SECRET=Secretqwerty12345
+
+# OpenAI Configuration
+OPENAI_API_KEY=sk-proj-xxxxxxxxxxxxxxxx
+
+# Database Configuration
+DATABASE_URL=postgresql+asyncpg://postgres:password@localhost:5432/virtual_class_db
 ```
 
 ### 3. 啟動 PostgreSQL 資料庫
 
 ```powershell
-# 使用 Docker（推薦）
-docker run --name virtual-class-db -e POSTGRES_PASSWORD=password -e POSTGRES_DB=virtual_class -p 5432:5432 -d postgres:15
-
-# 或安裝本地 PostgreSQL
+# 確保 PostgreSQL 已安裝並在背景執行（預設 Port 5432）
 ```
 
-### 4. 啟動 LiveKit Server
+### 4. 啟動伺服器（需同時開啟三個終端）
 
 ```powershell
-# 使用 Docker
-docker run --rm -p 7880:7880 -p 7881:7881 -p 7882:7882/udp livekit/livekit-server --dev
+# 終端 1：啟動後端 API Server
+uvicorn main:app --port 8000
 
-# 或下載 LiveKit binary
-```
+# 終端 2：啟動前端網頁
+cd web_client
+npm run dev
 
-### 5. 初始化資料庫並啟動 FastAPI
-
-```powershell
-# 啟動 FastAPI Server
-python main.py
-
-# API 將運行於 http://localhost:8000
-# API 文件: http://localhost:8000/docs
-```
-
-### 6. 啟動 LiveKit Worker（語音 Pipeline）
-
-```powershell
-# 在另一個終端啟動
-python agents/voice_pipeline.py dev
+# 終端 3：啟動 Voice AI Agent
+python -m agents.voice_pipeline dev
 ```
 
 ## 📝 API 使用流程
 
-### 1. 註冊 / 登入
+> 本系統無需登入驗證，所有 API 端點均可直接呼叫。
+
+### 1. 快速取得 Token（推薦測試用）
 
 ```bash
-# 註冊
-curl -X POST "http://localhost:8000/auth/register" \
-  -H "Content-Type: application/json" \
-  -d '{"username": "teacher1", "email": "teacher@example.com", "password": "password123"}'
-
-# 登入（獲取 JWT token）
-curl -X POST "http://localhost:8000/auth/login" \
-  -H "Content-Type: application/json" \
-  -d '{"username": "teacher1", "password": "password123"}'
+curl -X POST "http://localhost:8000/livekit/quick_token"
 ```
+
+會自動建立 guest 使用者和 Session，返回 LiveKit Token。
 
 ### 2. 創建 Session
 
 ```bash
 curl -X POST "http://localhost:8000/session/create" \
-  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"title": "My First Teaching Session"}'
 ```
@@ -147,7 +145,6 @@ curl -X POST "http://localhost:8000/session/create" \
 
 ```bash
 curl -X POST "http://localhost:8000/livekit/token" \
-  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"session_uuid": "YOUR_SESSION_UUID"}'
 ```
@@ -155,19 +152,24 @@ curl -X POST "http://localhost:8000/livekit/token" \
 ### 4. 連線到 LiveKit（前端）
 
 使用返回的 `token` 和 `url` 連線到 LiveKit 房間，開始語音互動。
+或直接開啟 `http://localhost:3000` 使用前端介面。
 
 ### 5. 下載對話記錄
 
 ```bash
 # Markdown 格式
 curl -X GET "http://localhost:8000/report/YOUR_SESSION_UUID/transcript?format=markdown" \
-  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
   --output transcript.md
 
 # TXT 格式
 curl -X GET "http://localhost:8000/report/YOUR_SESSION_UUID/transcript?format=txt" \
-  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
   --output transcript.txt
+```
+
+### 6. 獲取 Session 摘要
+
+```bash
+curl -X GET "http://localhost:8000/report/YOUR_SESSION_UUID/summary"
 ```
 
 ## 🔧 開發指南
@@ -189,7 +191,7 @@ alembic upgrade head
 
 ```powershell
 # 啟動 Worker 並查看日誌
-python agents/voice_pipeline.py dev --log-level debug
+python -m agents.voice_pipeline dev
 ```
 
 ## 🎯 系統運作流程
@@ -221,9 +223,17 @@ sequenceDiagram
 ### `agents/voice_pipeline.py` - 雙路徑 Pipeline 核心
 
 這是整個系統最關鍵的檔案，實作了：
-- **快速路徑**: `setup_fast_path()` 使用 LiveKit VoicePipelineAgent
-- **慢速路徑**: `_slow_path_user_transcription()` 和 `_slow_path_agent_transcription()`
-- **並行執行**: 使用 `asyncio.create_task()` 確保兩條路徑同時運行
+- **OpenAI Realtime 連線**: `OpenAIRealtimeClient` 透過 WebSocket 直連 OpenAI Realtime API
+- **雙路徑處理**: `DualPathVoicePipeline` 同時處理語音回應與文字轉錄
+- **音訊串流**: 將 OpenAI 回應的音訊即時推送到 LiveKit 房間
+
+### `services/db_manager.py` - 資料庫操作封裝
+
+封裝所有 CRUD 操作：User、Session、Conversation、Transcript。
+
+### `services/gcc_module.py` - GCC 上下文模組
+
+為 Agent 提供上下文管理（context/context_full）與事件記錄（log_ota）。
 
 ### `core/langgraph_coordinator.py` - 場景協調
 
@@ -242,6 +252,9 @@ A: 檢查：
 
 ### Q: 轉錄文字不完整？
 A: 慢速路徑是異步的，確保在結束 session 前等待所有轉錄完成。
+
+### Q: Port 被佔用？
+A: 參考 `usage_guide_cn.md` 中的常見問題段落進行排除。
 
 ## 📄 授權
 
